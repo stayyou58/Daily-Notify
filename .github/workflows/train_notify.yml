@@ -1,0 +1,28 @@
+name: 火車誤點通知
+
+on:
+  schedule:
+    - cron: "50 23 * * 0-4"  # UTC 23:50 = 台灣時間 07:50，週一到週五
+  workflow_dispatch:  # 允許手動觸發，方便測試
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run train check
+        env:
+          TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
+          TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python check_train.py
