@@ -1,9 +1,7 @@
 name: 火車誤點通知
 
 on:
-  schedule:
-    - cron: "50 23 * * 0-4"  # UTC 23:50 = 台灣時間 07:50，週一到週五
-  workflow_dispatch:  # 允許手動觸發，方便測試
+  workflow_dispatch:
 
 jobs:
   notify:
