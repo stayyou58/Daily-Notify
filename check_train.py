@@ -1,6 +1,9 @@
 import requests
 import os
 from datetime import datetime, timedelta, timezone
+from dotenv import load_dotenv
+
+load_dotenv()
 
 TW_TZ = timezone(timedelta(hours=8))
 
@@ -28,11 +31,11 @@ def get_delay_info(token):
 
 def get_train_timetable(token, train_no):
     """取得今日該車次完整停靠站時刻"""
-    url = f"https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/DailyTimetable/Today/TrainNo/{train_no}?%24format=JSON"
+    url = f"https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/DailyTrainTimetable/Today/TrainNo/{train_no}?%24format=JSON"
     headers = {"Authorization": f"Bearer {token}"}
     res = requests.get(url, headers=headers)
     data = res.json()
-    timetables = data.get("DailyTimetables", [])
+    timetables = data.get("TrainTimetables", [])
     if not timetables:
         return []
     return timetables[0].get("StopTimes", [])
@@ -98,11 +101,6 @@ def send_discord(message):
     requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
 
 def main():
-    today = datetime.now(TW_TZ).weekday()  # 修正時區 bug
-    if today >= 5:
-        print("今天是假日，不發送通知")
-        return
-
     try:
         token = get_tdx_token()
         delays = get_delay_info(token)
