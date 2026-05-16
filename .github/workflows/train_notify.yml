@@ -1,7 +1,14 @@
 name: 火車誤點通知
 
 on:
+  # [TEMP: SD-4 之前的暫時方案] target input 讓不同 cron 各自觸發單一 target。
+  # SD-4 完成後可移除 inputs 區塊。
   workflow_dispatch:
+    inputs:
+      target:
+        description: "只跑指定 target name（留空則跑全部）"
+        required: false
+        type: string
 
 jobs:
   notify:
@@ -22,5 +29,8 @@ jobs:
         env:
           TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
           TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL_SELF: ${{ secrets.DISCORD_WEBHOOK_URL_SELF }}
+          DISCORD_WEBHOOK_URL_FAMILY_A: ${{ secrets.DISCORD_WEBHOOK_URL_FAMILY_A }}
+          DISCORD_WEBHOOK_URL_FAMILY_B: ${{ secrets.DISCORD_WEBHOOK_URL_FAMILY_B }}
+          TARGET_NAME: ${{ inputs.target }}  # [TEMP: SD-4 之前的暫時方案] SD-4 完成後可移除
         run: python check_train.py
