@@ -2,8 +2,8 @@ NOTIFY_TARGETS = [
     {
         "name": "self",
         "type": "train",
-        "from_station": "1230",  # 崎頂
-        "trains": ["2124", "1152"],
+        "from_station": "1240",  # 崎頂
+        "trains": ["2120", "1148", "2124", "1152", "1158"],
         "webhook_env": "DISCORD_WEBHOOK_URL_SELF",
     },
     {

@@ -46,29 +46,25 @@ def tdx_get(url, token, max_retries=3):
     return {}
 
 
-def get_train_live_board(token, train_no):
-    """取得指定車次的即時位置與誤點資料，回傳第一筆或 None"""
-    url = f"https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/TrainLiveBoard/TrainNo/{train_no}?%24format=JSON"
+def get_all_live_boards(token):
+    """一次取得全線即時看板，回傳 {train_no: board}。全站共用，只需打一次。"""
+    url = "https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/TrainLiveBoard?%24format=JSON"
     boards = tdx_get(url, token).get("TrainLiveBoards", [])
-    return boards[0] if boards else None
+    return {b.get("TrainNo"): b for b in boards}
 
 
-def get_train_timetable(token, train_no):
-    """取得今日該車次完整停靠站時刻"""
-    url = f"https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/DailyTrainTimetable/Today/TrainNo/{train_no}?%24format=JSON"
+def get_station_timetable(token, station_id):
+    """一次取得該站今日所有車次停靠時刻，回傳 ({train_no: stop}, station_name)。"""
+    url = f"https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/DailyStationTimetable/Today/Station/{station_id}?%24format=JSON"
     data = tdx_get(url, token)
-    timetables = data.get("TrainTimetables", [])
-    if not timetables:
-        return []
-    return timetables[0].get("StopTimes", [])
-
-
-def get_station_stop(stop_times, station_id):
-    """從 stop_times 找出指定站的停靠資訊"""
-    for stop in stop_times:
-        if stop.get("StationID") == station_id:
-            return stop
-    return None
+    stops = {}
+    station_name = None
+    for group in data.get("StationTimetables", []):
+        if station_name is None:
+            station_name = group.get("StationName", {}).get("Zh_tw")
+        for stop in group.get("TimeTables", []):
+            stops[stop.get("TrainNo")] = stop
+    return stops, station_name
 
 
 def get_stop_time(stop):
@@ -76,34 +72,19 @@ def get_stop_time(stop):
     return stop.get("DepartureTime") or stop.get("ArrivalTime")
 
 
-def is_completed(stop_times):
-    """判斷火車是否已抵達末站完成運行"""
-    if not stop_times:
-        return False
+def get_status(live_board, depart_time, from_station_name):
     now = datetime.now(TW_TZ)
-    time_str = get_stop_time(stop_times[-1])
-    if not time_str:
-        return False
-    h, m = map(int, time_str.split(":"))
-    final_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
-    return now > final_dt
-
-
-def get_status(live_board, stop_times, from_stop):
-    now = datetime.now(TW_TZ)
-    from_station_name = from_stop.get("StationName", {}).get("Zh_tw")
+    h, m = map(int, depart_time.split(":"))
+    scheduled_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
 
     if live_board is None:
-        if is_completed(stop_times):
-            return "⬛ 已完駛"
-        return "⏳ 尚未發車"
+        # 無即時看板：發車前視為尚未發車，發車後視為已離站（站別時刻表拿不到末站時間，無法判定完駛）
+        if now < scheduled_dt:
+            return "⏳ 尚未發車"
+        return "⬛ 已發車（無即時位置資訊）"
 
-    time_str = get_stop_time(from_stop)
-    h, m = map(int, time_str.split(":"))
     delay_minutes = live_board.get("DelayTime", 0)
-    depart_dt = now.replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(
-        minutes=delay_minutes
-    )
+    depart_dt = scheduled_dt + timedelta(minutes=delay_minutes)
 
     if now >= depart_dt:
         current_station = live_board.get("StationName", {}).get("Zh_tw", "")
@@ -121,38 +102,34 @@ def send_discord(message, webhook_url):
     requests.post(webhook_url, json={"content": message})
 
 
-def build_train_message(target, token):
+def build_train_message(target, token, live_boards):
     from_station_id = target["from_station"]
     trains = target["trains"]
 
-    from_station_name = None
+    # 每個出發站只打一次站別時刻表；即時看板由外部共用傳入。
+    station_timetable, station_name = get_station_timetable(token, from_station_id)
+    from_station_name = station_name or from_station_id
+
     train_status_lines = []
     for train_no in trains:
-        stop_times = get_train_timetable(token, train_no)
-        from_stop = get_station_stop(stop_times, from_station_id)
+        stop = station_timetable.get(train_no)
+        depart_time = get_stop_time(stop) if stop else None
 
-        if not from_stop:
+        if not depart_time:
             train_status_lines.append(f"**{train_no} 次**：⚪ 查無起站資訊")
             continue
 
-        live_board = get_train_live_board(token, train_no)
-
-        if from_station_name is None:
-            from_station_name = from_stop.get("StationName", {}).get(
-                "Zh_tw", from_station_id
-            )
-        depart_time = get_stop_time(from_stop)
-        status = get_status(live_board, stop_times, from_stop)
+        live_board = live_boards.get(train_no)
+        status = get_status(live_board, depart_time, from_station_name)
         train_status_lines.append(
             f"**{train_no} 次**（{depart_time} {from_station_name}發）：{status}"
         )
 
-    station_label = from_station_name or from_station_id
-    lines = [f"🚆 **今日{station_label}出發火車誤點通知**\n"] + train_status_lines
+    lines = [f"🚆 **今日{from_station_name}出發火車誤點通知**\n"] + train_status_lines
     return "\n".join(lines)
 
 
-def process_target(target, token):
+def process_target(target, token, live_boards):
     webhook_url = os.environ.get(target["webhook_env"])
     if not webhook_url:
         print(f"skip {target['name']}: env {target['webhook_env']} not set")
@@ -164,7 +141,7 @@ def process_target(target, token):
         return
 
     try:
-        message = build_train_message(target, token)
+        message = build_train_message(target, token, live_boards)
     except Exception as e:
         message = f"🚆 **{target['name']} 通知**\n\n⚪ 查無資料（API 錯誤：{e}）"
 
@@ -198,8 +175,11 @@ def main():
             print(f"no target matches TARGET_NAME={target_filter}")
             return
 
+    # 即時看板全站共用，整輪只抓一次
+    live_boards = get_all_live_boards(token)
+
     for target in targets:
-        process_target(target, token)
+        process_target(target, token, live_boards)
 
 
 if __name__ == "__main__":
